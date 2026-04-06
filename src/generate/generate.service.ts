@@ -26,6 +26,11 @@ export class GenerateService {
 
   constructor(private readonly configService: ConfigService) {
     const apiKey = this.configService.get<string>('OPENROUTER_API_KEY');
+    if (!apiKey) {
+      throw new Error(
+        'OPENROUTER_API_KEY is not set. Copy .env.example to .env and fill in your key.',
+      );
+    }
     const modelName =
       this.configService.get<string>('OPENROUTER_MODEL') ?? 'openai/gpt-4o';
 
@@ -123,7 +128,7 @@ export class GenerateService {
 
         for await (const chunk of stream) {
           fullText += chunk;
-          yield { data: JSON.stringify({ chunk, partial: fullText }) };
+          yield { data: JSON.stringify({ chunk }) };
         }
 
         clearTimeout(timeout);
@@ -148,6 +153,14 @@ export class GenerateService {
             this.logger.warn(
               `Attempt ${attempt} failed: ${error.message}. Retrying...`,
             );
+            // Signal client to discard previous chunks
+            yield {
+              data: JSON.stringify({
+                retry: true,
+                attempt: attempt + 1,
+                reason: error.message,
+              }),
+            };
             continue;
           }
         }

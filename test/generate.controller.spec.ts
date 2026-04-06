@@ -90,7 +90,7 @@ describe('GenerateController (e2e)', () => {
     };
 
     async function* mockStream() {
-      yield { data: JSON.stringify({ chunk: 'partial', partial: 'partial' }) };
+      yield { data: JSON.stringify({ chunk: 'partial' }) };
       yield { data: JSON.stringify({ done: true, result: mockResult }) };
     }
 
