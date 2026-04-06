@@ -1,0 +1,176 @@
+{
+  "nodes": [
+    {
+      "id": "promptTemplate_0",
+      "position": { "x": 100, "y": 300 },
+      "type": "customNode",
+      "data": {
+        "id": "promptTemplate_0",
+        "label": "Prompt Template",
+        "version": 1,
+        "name": "promptTemplate",
+        "type": "PromptTemplate",
+        "category": "Prompts",
+        "inputs": {
+          "template": "You are a world-class SEO copywriter and e-commerce specialist.\nYour task is to generate a complete SEO-optimized product description package.\n\nSTRICT RULES you MUST follow:\n1. \"title\" — a clickable SEO title. STRICTLY 60 characters or fewer. Include the main keyword naturally.\n2. \"meta_description\" — a selling meta description. STRICTLY 160 characters or fewer. Include a call-to-action and at least one keyword.\n3. \"h1\" — the main heading for the product page. Must contain the primary keyword. Must differ from the title.\n4. \"description\" — a detailed, structured product description. MUST be at least 300 characters. Use the provided keywords organically (keyword density 1-3%). Write compelling copy that sells.\n5. \"bullets\" — exactly 3 to 5 key product benefits as a bullet list. Each bullet should be concise and highlight a unique selling point.\n\nLANGUAGE: Write in the same language as the product name provided.\n\nGenerate an SEO description package for:\n\nProduct Name: {product_name}\nCategory: {category}\nKeywords: {keywords}\n\n{format_instructions}"
+        },
+        "inputParams": [
+          {
+            "label": "Template",
+            "name": "template",
+            "type": "string",
+            "rows": 6
+          }
+        ],
+        "inputAnchors": [
+          {
+            "label": "Format Instructions",
+            "name": "format_instructions",
+            "type": "string",
+            "optional": true
+          }
+        ],
+        "outputAnchors": [
+          {
+            "name": "output",
+            "label": "Output",
+            "type": "PromptTemplate"
+          }
+        ]
+      }
+    },
+    {
+      "id": "chatOpenAI_0",
+      "position": { "x": 500, "y": 100 },
+      "type": "customNode",
+      "data": {
+        "id": "chatOpenAI_0",
+        "label": "ChatOpenAI",
+        "version": 6,
+        "name": "chatOpenAI",
+        "type": "ChatOpenAI",
+        "category": "Chat Models",
+        "inputs": {
+          "modelName": "gpt-4o",
+          "temperature": "0.7",
+          "maxTokens": "",
+          "topP": "",
+          "streaming": true
+        },
+        "credential": "chatOpenAI_api_key",
+        "inputParams": [
+          { "label": "Model Name", "name": "modelName", "type": "string" },
+          { "label": "Temperature", "name": "temperature", "type": "number" }
+        ],
+        "inputAnchors": [],
+        "outputAnchors": [
+          { "name": "output", "label": "Output", "type": "ChatOpenAI" }
+        ]
+      }
+    },
+    {
+      "id": "structuredOutputParser_0",
+      "position": { "x": 100, "y": 100 },
+      "type": "customNode",
+      "data": {
+        "id": "structuredOutputParser_0",
+        "label": "Structured Output Parser",
+        "version": 1,
+        "name": "structuredOutputParser",
+        "type": "StructuredOutputParser",
+        "category": "Output Parsers",
+        "inputs": {
+          "jsonStructure": "[\n  {\n    \"key\": \"title\",\n    \"type\": \"string\",\n    \"description\": \"SEO title, clickable, strictly up to 60 characters\"\n  },\n  {\n    \"key\": \"meta_description\",\n    \"type\": \"string\",\n    \"description\": \"Selling meta description, strictly up to 160 characters, with call-to-action\"\n  },\n  {\n    \"key\": \"h1\",\n    \"type\": \"string\",\n    \"description\": \"Main heading for the product page, must contain primary keyword\"\n  },\n  {\n    \"key\": \"description\",\n    \"type\": \"string\",\n    \"description\": \"Detailed product description, at least 300 characters, keyword density 1-3%\"\n  },\n  {\n    \"key\": \"bullets\",\n    \"type\": \"array\",\n    \"description\": \"Array of 3-5 key product benefits as bullet points\"\n  }\n]"
+        },
+        "inputParams": [
+          {
+            "label": "JSON Structure",
+            "name": "jsonStructure",
+            "type": "string",
+            "rows": 8,
+            "placeholder": "Array of objects with key, type, description"
+          }
+        ],
+        "inputAnchors": [],
+        "outputAnchors": [
+          {
+            "name": "output",
+            "label": "Output",
+            "type": "StructuredOutputParser"
+          }
+        ]
+      }
+    },
+    {
+      "id": "llmChain_0",
+      "position": { "x": 500, "y": 400 },
+      "type": "customNode",
+      "data": {
+        "id": "llmChain_0",
+        "label": "LLM Chain",
+        "version": 3,
+        "name": "llmChain",
+        "type": "LLMChain",
+        "category": "Chains",
+        "inputs": {
+          "inputVariables": "product_name,category,keywords"
+        },
+        "inputParams": [
+          {
+            "label": "Input Variables",
+            "name": "inputVariables",
+            "type": "string",
+            "description": "Comma-separated list of input variables"
+          }
+        ],
+        "inputAnchors": [
+          {
+            "label": "Language Model",
+            "name": "model",
+            "type": "BaseChatModel"
+          },
+          {
+            "label": "Prompt",
+            "name": "prompt",
+            "type": "BasePromptTemplate"
+          },
+          {
+            "label": "Output Parser",
+            "name": "outputParser",
+            "type": "BaseLLMOutputParser",
+            "optional": true
+          }
+        ],
+        "outputAnchors": [
+          { "name": "output", "label": "Output", "type": "LLMChain" }
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "chatOpenAI_0",
+      "sourceHandle": "chatOpenAI_0-output-chatOpenAI-ChatOpenAI",
+      "target": "llmChain_0",
+      "targetHandle": "llmChain_0-input-model-BaseChatModel"
+    },
+    {
+      "source": "promptTemplate_0",
+      "sourceHandle": "promptTemplate_0-output-promptTemplate-PromptTemplate",
+      "target": "llmChain_0",
+      "targetHandle": "llmChain_0-input-prompt-BasePromptTemplate"
+    },
+    {
+      "source": "structuredOutputParser_0",
+      "sourceHandle": "structuredOutputParser_0-output-structuredOutputParser-StructuredOutputParser",
+      "target": "llmChain_0",
+      "targetHandle": "llmChain_0-input-outputParser-BaseLLMOutputParser"
+    },
+    {
+      "source": "structuredOutputParser_0",
+      "sourceHandle": "structuredOutputParser_0-output-structuredOutputParser-StructuredOutputParser",
+      "target": "promptTemplate_0",
+      "targetHandle": "promptTemplate_0-input-format_instructions-string"
+    }
+  ]
+}
