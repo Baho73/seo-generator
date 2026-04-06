@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { ChatOpenAI } from '@langchain/openai';
 import { ChatPromptTemplate } from '@langchain/core/prompts';
 import { StringOutputParser } from '@langchain/core/output_parsers';
+import { Runnable } from '@langchain/core/runnables';
 import {
   SEO_SYSTEM_PROMPT,
   SEO_USER_PROMPT_TEMPLATE,
@@ -23,6 +24,10 @@ export class GenerateService {
   private readonly logger = new Logger(GenerateService.name);
   private readonly model: ChatOpenAI;
   private readonly prompt: ChatPromptTemplate;
+  /** LCEL chain: prompt → model.withStructuredOutput(Zod) — uses function calling */
+  private readonly structuredChain: Runnable;
+  /** Fallback LCEL chain: prompt → model → StringOutputParser — for text streaming */
+  private readonly streamingChain: Runnable;
 
   constructor(private readonly configService: ConfigService) {
     const apiKey = this.configService.get<string>('OPENROUTER_API_KEY');
@@ -48,10 +53,21 @@ export class GenerateService {
       ['system', SEO_SYSTEM_PROMPT],
       ['human', SEO_USER_PROMPT_TEMPLATE],
     ]);
+
+    // Primary: function calling with Zod schema validation
+    this.structuredChain = this.prompt.pipe(
+      this.model.withStructuredOutput(seoOutputSchema),
+    );
+
+    // Fallback: text streaming with manual JSON extraction
+    this.streamingChain = this.prompt
+      .pipe(this.model)
+      .pipe(new StringOutputParser());
   }
 
   /**
    * Parse raw LLM text output, extract JSON, validate with Zod.
+   * Used as fallback when structured output is unavailable.
    * Public for unit testing.
    */
   parseAndValidate(raw: string): SeoOutput {
@@ -94,22 +110,84 @@ export class GenerateService {
   }
 
   /**
-   * Stream SEO generation via LangChain LCEL chain.
-   * Yields SSE-formatted chunks, ends with validated JSON result.
+   * Generate SEO description using structured output (function calling).
+   * Primary method — Zod schema is enforced by the LLM provider via tool/function call.
+   * Falls back to text streaming + manual parsing if structured output fails.
    */
   async *generateSeoStream(
     dto: GenerateSeoDto,
+    signal?: AbortSignal,
   ): AsyncGenerator<{ data: string }> {
-    const chain = this.prompt
-      .pipe(this.model)
-      .pipe(new StringOutputParser());
-
     const input = {
       product_name: dto.product_name,
       category: dto.category,
       keywords: dto.keywords.join(', '),
     };
 
+    // Attempt 1: Structured Output via function calling (preferred)
+    try {
+      yield* this.generateWithStructuredOutput(input, signal);
+      return;
+    } catch (error) {
+      this.logger.warn(
+        `Structured output failed: ${(error as Error).message}. Falling back to text streaming.`,
+      );
+    }
+
+    // Attempt 2: Fallback to text streaming + manual JSON parsing
+    yield* this.generateWithTextStream(input, signal);
+  }
+
+  /**
+   * Primary path: uses model.withStructuredOutput(zodSchema)
+   * which leverages function calling / structured outputs API.
+   */
+  private async *generateWithStructuredOutput(
+    input: Record<string, string>,
+    signal?: AbortSignal,
+  ): AsyncGenerator<{ data: string }> {
+    const abortController = new AbortController();
+    const timeout = setTimeout(() => abortController.abort(), LLM_TIMEOUT_MS);
+
+    // Combine external signal (client disconnect) with timeout
+    if (signal) {
+      signal.addEventListener('abort', () => abortController.abort());
+    }
+
+    try {
+      const result: SeoOutput = await this.structuredChain.invoke(input, {
+        signal: abortController.signal,
+      });
+
+      clearTimeout(timeout);
+
+      // Validate with Zod (belt and suspenders — LLM should already conform)
+      const validated = seoOutputSchema.safeParse(result);
+      if (!validated.success) {
+        const issues = validated.error.issues
+          .map((i) => `${i.path.join('.')}: ${i.message}`)
+          .join('; ');
+        throw new LlmInvalidJsonError(JSON.stringify(result), issues);
+      }
+
+      yield { data: JSON.stringify({ done: true, result: validated.data }) };
+    } catch (error) {
+      clearTimeout(timeout);
+      if (abortController.signal.aborted && !signal?.aborted) {
+        throw new LlmTimeoutError(LLM_TIMEOUT_MS);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Fallback path: streams raw text chunks via SSE, then validates
+   * the accumulated response with Zod. Retries once on invalid JSON.
+   */
+  private async *generateWithTextStream(
+    input: Record<string, string>,
+    signal?: AbortSignal,
+  ): AsyncGenerator<{ data: string }> {
     let lastError: Error | null = null;
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
@@ -119,10 +197,14 @@ export class GenerateService {
         LLM_TIMEOUT_MS,
       );
 
+      if (signal) {
+        signal.addEventListener('abort', () => abortController.abort());
+      }
+
       let fullText = '';
 
       try {
-        const stream = await chain.stream(input, {
+        const stream = await this.streamingChain.stream(input, {
           signal: abortController.signal,
         });
 
@@ -133,15 +215,17 @@ export class GenerateService {
 
         clearTimeout(timeout);
 
-        // Validate complete response
         const validated = this.parseAndValidate(fullText);
         yield { data: JSON.stringify({ done: true, result: validated }) };
         return;
       } catch (error) {
         clearTimeout(timeout);
 
-        if (abortController.signal.aborted) {
+        if (abortController.signal.aborted && !signal?.aborted) {
           throw new LlmTimeoutError(LLM_TIMEOUT_MS);
+        }
+        if (signal?.aborted) {
+          throw error;
         }
 
         if (
@@ -153,7 +237,6 @@ export class GenerateService {
             this.logger.warn(
               `Attempt ${attempt} failed: ${error.message}. Retrying...`,
             );
-            // Signal client to discard previous chunks
             yield {
               data: JSON.stringify({
                 retry: true,
@@ -169,7 +252,6 @@ export class GenerateService {
       }
     }
 
-    // All retries exhausted
     if (lastError) {
       throw lastError;
     }

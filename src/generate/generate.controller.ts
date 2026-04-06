@@ -1,5 +1,5 @@
-import { Controller, Post, Body, Res, HttpCode } from '@nestjs/common';
-import type { Response } from 'express';
+import { Controller, Post, Body, Req, Res, HttpCode, Logger } from '@nestjs/common';
+import type { Request, Response } from 'express';
 import { GenerateService } from './generate.service';
 import { GenerateSeoDto } from './dto/generate-seo.dto';
 import {
@@ -10,12 +10,15 @@ import {
 
 @Controller('generate-seo')
 export class GenerateController {
+  private readonly logger = new Logger(GenerateController.name);
+
   constructor(private readonly generateService: GenerateService) {}
 
   @Post()
   @HttpCode(200)
   async generate(
     @Body() dto: GenerateSeoDto,
+    @Req() req: Request,
     @Res() res: Response,
   ): Promise<void> {
     // Set SSE headers
@@ -25,13 +28,31 @@ export class GenerateController {
     res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders();
 
+    // Abort LLM call when client disconnects (saves tokens and CPU)
+    const abortController = new AbortController();
+    req.on('close', () => {
+      if (!res.writableEnded) {
+        this.logger.log('Client disconnected, aborting LLM stream');
+        abortController.abort();
+      }
+    });
+
     try {
-      for await (const event of this.generateService.generateSeoStream(dto)) {
+      const stream = this.generateService.generateSeoStream(
+        dto,
+        abortController.signal,
+      );
+      for await (const event of stream) {
+        if (abortController.signal.aborted) break;
         res.write(`data: ${event.data}\n\n`);
       }
       res.end();
     } catch (error) {
-      // Send error as SSE event, then close
+      if (abortController.signal.aborted) {
+        // Client already gone — no point sending error
+        res.end();
+        return;
+      }
       const errorPayload = this.mapErrorToPayload(error);
       res.write(`data: ${JSON.stringify(errorPayload)}\n\n`);
       res.end();
