@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { ChatOpenAI } from '@langchain/openai';
 import { ChatPromptTemplate } from '@langchain/core/prompts';
 import { StringOutputParser } from '@langchain/core/output_parsers';
@@ -23,10 +24,14 @@ export class GenerateService {
   private readonly model: ChatOpenAI;
   private readonly prompt: ChatPromptTemplate;
 
-  constructor() {
+  constructor(private readonly configService: ConfigService) {
+    const apiKey = this.configService.get<string>('OPENROUTER_API_KEY');
+    const modelName =
+      this.configService.get<string>('OPENROUTER_MODEL') ?? 'openai/gpt-4o';
+
     this.model = new ChatOpenAI({
-      modelName: process.env.OPENROUTER_MODEL ?? 'openai/gpt-4o',
-      openAIApiKey: process.env.OPENROUTER_API_KEY,
+      modelName,
+      apiKey,
       configuration: {
         baseURL: 'https://openrouter.ai/api/v1',
       },

@@ -1,12 +1,14 @@
 import { GenerateService } from '../src/generate/generate.service';
+import { ConfigService } from '@nestjs/config';
 
 describe('GenerateService', () => {
   let service: GenerateService;
 
   beforeEach(() => {
-    // Bypass constructor's ChatOpenAI initialization for unit tests
-    process.env.OPENROUTER_API_KEY = 'test-key';
-    service = new GenerateService();
+    const configService = new ConfigService({
+      OPENROUTER_API_KEY: 'test-key',
+    });
+    service = new GenerateService(configService);
   });
 
   const validData = {
